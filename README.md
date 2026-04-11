@@ -40,7 +40,7 @@ Article
 Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). Contrast-Space Projection for Network Meta-Analysis: An Exact and Invariant Study-Based Decomposition of Direct and Indirect Contributions. Research Synthesis Methods.
 
 Software
-Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). CSP-NMA: R implementation of the Contrast-Space Projection framework. [Insert your GitHub URL here].
+Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). CSP-NMA: R implementation of the Contrast-Space Projection framework. https://github.com/your-username/CSP-NMA.
 
 BibTeX
 Code snippet
