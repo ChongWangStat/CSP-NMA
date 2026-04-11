@@ -1,28 +1,32 @@
-Contrast-Space Projection (CSP) for Network Meta-Analysis
-This repository provides the official R implementation of the Contrast-Space Projection (CSP) framework, an exact and invariant study-based decomposition of direct and indirect evidence contributions in Network Meta-Analysis (NMA).
+# Contrast-Space Projection (CSP) for Network Meta-Analysis
 
-Overview
+This repository provides the official R implementation of the **Contrast-Space Projection (CSP)** framework, an exact and invariant study-based decomposition of direct and indirect evidence contributions in Network Meta-Analysis (NMA).
+
+## Overview
+
 The CSP framework addresses the "reproducibility gap" in NMA. While traditional methods often struggle to reproduce NMA estimates from marginal pairwise summaries—particularly when multi-arm trials induce complex within-study correlations—CSP provides an exact, invariant, and study-based decomposition.
 
-Key Features
-Exact Decomposition: Reproduces NMA estimates precisely using a projection-based approach.
+### Key Features
+* **Exact Decomposition:** Reproduces NMA estimates precisely using a projection-based approach.
+* **Invariance:** Results are independent of the choice of baseline treatments or contrast definitions.
+* **Multi-Arm Integration:** Naturally handles within-study correlations without data loss.
+* **Visual Diagnostics:** Includes interactive tools for assessing network "tension" and evidence contribution.
 
-Invariance: Results are independent of the choice of baseline treatments or contrast definitions.
+---
 
-Multi-Arm Integration: Naturally handles within-study correlations without data loss.
+## Repository Structure
 
-Visual Diagnostics: Includes interactive tools for assessing network "tension" and evidence contribution.
+* **`csp_functions.R`**: The core library containing the mathematical engine for the CSP framework.
+* **`csp_example.R`**: A walkthrough script using an illustrative dataset (Treatments A–E, Studies I–V) to demonstrate the analysis pipeline.
 
-Repository Structure
-csp_functions.R: The core library containing the mathematical engine for the CSP framework.
+---
 
-csp_example.R: A walkthrough script using an illustrative dataset (Treatments A–E, Studies I–V) to demonstrate the analysis pipeline.
+## Getting Started
 
-Getting Started
-Prerequisites
+### Prerequisites
+
 Ensure you have R installed along with the following packages:
-
-R
+```R
 install.packages(c("Matrix", "MASS", "dplyr", "ggplot2", "plotly"))
 Running the Example
 Place csp_functions.R and csp_example.R in the same directory.
@@ -40,7 +44,7 @@ Article
 Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). Contrast-Space Projection for Network Meta-Analysis: An Exact and Invariant Study-Based Decomposition of Direct and Indirect Contributions. Research Synthesis Methods.
 
 Software
-Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). CSP-NMA: R implementation of the Contrast-Space Projection framework. https://github.com/your-username/CSP-NMA.
+Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). CSP-NMA: R implementation of the Contrast-Space Projection framework. https://github.com/chongwangstat/CSP-NMA.
 
 BibTeX
 Code snippet
@@ -57,7 +61,7 @@ Code snippet
   year={2026},
   publisher={GitHub},
   journal={GitHub repository},
-  howpublished={\url{https://https://github.com/your-username/CSP-NMA}}
+  howpublished={\url{[https://github.com/chongwangstat/CSP-NMA](https://github.com/chongwangstat/CSP-NMA)}}
 }
 License
 This project is licensed under the MIT License.
