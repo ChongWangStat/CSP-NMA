@@ -359,29 +359,85 @@ SAFE_STUDY_SEP <- " ||| "
   )
 }
 
+
+.log_pdet <- function(M, tol = 1e-10) {
+  ev <- eigen(M, symmetric = TRUE, only.values = TRUE)$values
+  ev <- ev[ev > tol]
+  if (length(ev) == 0) return(-Inf)
+  sum(log(ev))
+}
+
+.estimate_tau2_reml <- function(tilde_y, tilde_X, B, V_within_blocks,
+                                lower = 0, upper = NULL, tol = 1e-10) {
+  XB <- tilde_X %*% B
+
+  make_V <- function(tau2) {
+    as.matrix(Matrix::bdiag(lapply(V_within_blocks, function(Vk) {
+      Vk + tau2 * diag(nrow(Vk))
+    })))
+  }
+
+  neg_reml <- function(tau2) {
+    V_tau <- make_V(tau2)
+    V_plus <- MASS::ginv(V_tau)
+    I_beta <- t(XB) %*% V_plus %*% XB
+    beta_hat <- MASS::ginv(I_beta) %*% t(XB) %*% V_plus %*% tilde_y
+    resid <- tilde_y - XB %*% beta_hat
+
+    val <- 0.5 * (
+      .log_pdet(V_tau, tol = tol) +
+      .log_pdet(I_beta, tol = tol) +
+      as.numeric(t(resid) %*% V_plus %*% resid)
+    )
+    if (!is.finite(val)) val <- .Machine$double.xmax / 100
+    val
+  }
+
+  if (is.null(upper)) {
+    upper <- max(1, stats::var(as.numeric(tilde_y), na.rm = TRUE))
+  }
+  upper <- max(upper, 1e-6)
+
+  opt <- optimize(neg_reml, interval = c(lower, upper))
+
+  if (is.finite(opt$objective)) {
+    return(opt$minimum)
+  }
+
+  0
+}
+
+
 # ============================================================
 # 1. Fit CSP NMA and return P matrix
 # ============================================================
-fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE) {
+
+fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
+                        model = c("fixed", "random"),
+                        tau2 = NULL,
+                        tau_method = c("REML", "fixed")) {
+  model <- match.arg(model)
+  tau_method <- match.arg(tau_method)
+
   dat <- dat[, c("study", "id", "t", "r", "n")]
   dat$study <- as.character(dat$study)
   dat$id <- as.numeric(dat$id)
   dat$t <- as.character(dat$t)
   dat$r <- as.numeric(dat$r)
   dat$n <- as.numeric(dat$n)
-  
+
   dat <- dat[
     !is.na(dat$study) & !is.na(dat$id) & !is.na(dat$t) &
       !is.na(dat$r) & !is.na(dat$n),
     ,
     drop = FALSE
   ]
-  
+
   trts <- sort(unique(dat$t))
   ref_trt <- trts[1]
   global_pairs <- t(combn(trts, 2))
   pair_names <- apply(global_pairs, 1, paste, collapse = ":")
-  
+
   build_full_study_block <- function(dat_study, global_pair_names, cc = 0.5) {
     dat_study <- dat_study[order(dat_study$t), , drop = FALSE]
     arms <- dat_study$t
@@ -390,21 +446,21 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE) {
     study_name <- unique(dat_study$study)
     study_id <- unique(dat_study$id)
     k <- length(arms)
-    
+
     r_adj <- r + cc
     n_adj <- n + 2 * cc
     z <- qlogis(r_adj / n_adj)
     s2 <- 1 / r_adj + 1 / (n_adj - r_adj)
-    
+
     S <- diag(s2, nrow = k, ncol = k)
     cmb <- t(combn(seq_len(k), 2))
     n_pairs <- nrow(cmb)
-    
+
     M <- matrix(0, nrow = n_pairs, ncol = k)
     y <- numeric(n_pairs)
     local_pair_names <- character(n_pairs)
     row_names <- character(n_pairs)
-    
+
     for (i in seq_len(n_pairs)) {
       a <- cmb[i, 1]
       b <- cmb[i, 2]
@@ -414,39 +470,37 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE) {
       local_pair_names[i] <- paste(arms[a], arms[b], sep = ":")
       row_names[i] <- paste0(study_id, ".", study_name, "::", local_pair_names[i])
     }
-    
-    V <- M %*% S %*% t(M)
-    
+
+    V_within <- M %*% S %*% t(M)
+
     X <- matrix(0, nrow = n_pairs, ncol = length(global_pair_names))
     colnames(X) <- global_pair_names
     rownames(X) <- row_names
     for (i in seq_len(n_pairs)) {
       X[i, match(local_pair_names[i], global_pair_names)] <- 1
     }
-    
+
     list(
       study = study_name,
       id = study_id,
       arms = arms,
       y = y,
-      V = V,
+      V_within = V_within,
+      V = V_within,
       X = X,
       local_pair_names = local_pair_names,
       row_names = row_names,
       edge_names_in_tildeP = row_names
     )
   }
-  
+
   study_list <- split(dat, dat$id)
   blocks <- lapply(study_list, build_full_study_block, global_pair_names = pair_names, cc = cc)
-  
+
   tilde_y <- unlist(lapply(blocks, `[[`, "y"))
   tilde_X <- do.call(rbind, lapply(blocks, `[[`, "X"))
-  tilde_V <- as.matrix(bdiag(lapply(blocks, `[[`, "V")))
   proper_edge_names <- rownames(tilde_X)
-  rownames(tilde_V) <- proper_edge_names
-  colnames(tilde_V) <- proper_edge_names
-  
+
   B <- matrix(0, nrow = nrow(global_pairs), ncol = length(trts) - 1)
   for (i in seq_len(nrow(global_pairs))) {
     u <- global_pairs[i, 1]
@@ -458,17 +512,44 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE) {
       B[i, match(v, setdiff(trts, ref_trt))] <- 1
     }
   }
-  
+
+  if (model == "random") {
+    if (is.null(tau2)) {
+      if (tau_method != "REML") {
+        stop("For model = \"random\", either supply tau2 or use tau_method = \"REML\".")
+      }
+      tau2 <- .estimate_tau2_reml(
+        tilde_y = tilde_y,
+        tilde_X = tilde_X,
+        B = B,
+        V_within_blocks = lapply(blocks, `[[`, "V_within"),
+        tol = tol
+      )
+    }
+    tau2 <- max(as.numeric(tau2)[1], 0)
+  } else {
+    tau2 <- 0
+  }
+
+  blocks <- lapply(blocks, function(blk) {
+    blk$V <- blk$V_within + tau2 * diag(nrow(blk$V_within))
+    blk
+  })
+
+  tilde_V <- as.matrix(bdiag(lapply(blocks, `[[`, "V")))
+  rownames(tilde_V) <- proper_edge_names
+  colnames(tilde_V) <- proper_edge_names
+
   V_plus <- ginv(tilde_V)
   XB <- tilde_X %*% B
   I_beta <- t(XB) %*% V_plus %*% XB
   P <- B %*% ginv(I_beta) %*% t(XB) %*% V_plus
   colnames(P) <- proper_edge_names
   rownames(P) <- pair_names
-  
+
   theta_hat <- as.vector(P %*% tilde_y)
   names(theta_hat) <- pair_names
-  
+
   empty_path_df <- function() {
     data.frame(target = character(0), type = character(0), studies = character(0),
                path = character(0), weight = numeric(0), stringsAsFactors = FALSE)
@@ -657,7 +738,10 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE) {
     theta_hat = theta_hat,
     safe_study_sep = SAFE_STUDY_SEP,
     decomposition = decomposition,
-    overall = overall
+    overall = overall,
+    model = model,
+    tau2 = tau2,
+    tau_method = if (model == "random" && is.null(match.call()$tau2)) tau_method else "fixed"
   )
 }
 

@@ -19,16 +19,16 @@ source("csp_functions.R")
 #   E = Treatment E
 #
 # Studies:
-#   I, II, III, IV, V
+#   S1, S2, S3, S4, S5
 # ============================================================
 
 example_data <- data.frame(
   study = c(
-    "I","I","I","I",
-    "II","II","II","II",
-    "III","III",
-    "IV","IV",
-    "V","V"
+    "S1","S1","S1","S1",
+    "S2","S2","S2","S2",
+    "S3","S3",
+    "S4","S4",
+    "S5","S5"
   ),
   id = c(
     1,1,1,1,
@@ -102,3 +102,4 @@ p_3d <- plot_csp_3d(
   title = "Illustrative example: direct-study and overall indirect weights"
 )
 p_3d
+
