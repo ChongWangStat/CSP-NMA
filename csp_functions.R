@@ -134,13 +134,16 @@ SAFE_STUDY_SEP <- " ||| "
     if (length(cand) == 0) return(integer(0))
     ord <- order(-edge_df$weight[cand], edge_df$to[cand], edge_df$study[cand], edge_df$frag_id[cand])
     cand <- cand[ord]
-    for (ix in cand) {
+    
+    usable <- cand[!(edge_df$to[cand] %in% visited)]
+    if (length(usable) == 0) return(integer(0))
+    
+    for (ix in usable) {
       nxt <- edge_df$to[ix]
-      if (nxt %in% visited) next
       sub <- dfs(nxt, c(visited, nxt))
       if (!is.null(sub)) return(c(ix, sub))
     }
-    NULL
+    integer(0)
   }
   idx <- dfs(source, source)
   if (is.null(idx) || length(idx) == 0) return(NULL)
@@ -214,9 +217,12 @@ SAFE_STUDY_SEP <- " ||| "
     if (length(cand) == 0) return(NULL)
     ord <- order(-edge_df$weight[cand], edge_df$to[cand], edge_df$study[cand], edge_df$frag_id[cand])
     cand <- cand[ord]
-    for (ix in cand) {
+    
+    usable <- cand[!(edge_df$to[cand] %in% visited)]
+    if (length(usable) == 0) return(NULL)
+    
+    for (ix in usable) {
       nxt <- edge_df$to[ix]
-      if (nxt %in% visited) next
       sub <- dfs(nxt, c(visited, nxt))
       if (!is.null(sub)) return(c(ix, sub))
     }
@@ -367,14 +373,21 @@ SAFE_STUDY_SEP <- " ||| "
   sum(log(ev))
 }
 
-.estimate_tau2_reml <- function(tilde_y, tilde_X, B, V_within_blocks,
+.make_tau_block <- function(M, tau2) {
+  0.5 * tau2 * (M %*% t(M))
+}
+
+.estimate_tau2_reml <- function(tilde_y, tilde_X, B, V_within_blocks, M_blocks,
                                 lower = 0, upper = NULL, tol = 1e-10) {
   XB <- tilde_X %*% B
 
   make_V <- function(tau2) {
-    as.matrix(Matrix::bdiag(lapply(V_within_blocks, function(Vk) {
-      Vk + tau2 * diag(nrow(Vk))
-    })))
+    mats <- lapply(seq_along(V_within_blocks), function(i) {
+      Vk <- V_within_blocks[[i]]
+      Mk <- M_blocks[[i]]
+      Vk + .make_tau_block(Mk, tau2)
+    })
+    as.matrix(Matrix::bdiag(mats))
   }
 
   neg_reml <- function(tau2) {
@@ -485,6 +498,7 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
       id = study_id,
       arms = arms,
       y = y,
+      M=M,
       V_within = V_within,
       V = V_within,
       X = X,
@@ -523,6 +537,7 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
         tilde_X = tilde_X,
         B = B,
         V_within_blocks = lapply(blocks, `[[`, "V_within"),
+        M_blocks = lapply(blocks, `[[`, "M"),
         tol = tol
       )
     }
@@ -532,7 +547,7 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
   }
 
   blocks <- lapply(blocks, function(blk) {
-    blk$V <- blk$V_within + tau2 * diag(nrow(blk$V_within))
+    blk$V <- blk$V_within + .make_tau_block(blk$M, tau2)
     blk
   })
 

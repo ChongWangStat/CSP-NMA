@@ -1,5 +1,7 @@
 # Contrast-Space Projection (CSP) for Network Meta-Analysis
 
+If you use this code, please cite the associated manuscript.
+
 GitHub repository: https://github.com/ChongWangStat/CSP-NMA
 
 This repository provides the official R implementation of the Contrast-Space Projection (CSP) framework, an exact and invariant study-based decomposition of direct and indirect evidence contributions in Network Meta-Analysis (NMA).
@@ -57,7 +59,7 @@ If you use this code or the CSP framework in your research, please cite both the
 
 ### Article
 
-Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). Contrast-Space Projection for Network Meta-Analysis: An Exact and Invariant Study-Based Decomposition of Direct and Indirect Contributions. Research Synthesis Methods.
+Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). Contrast-Space Projection for Network Meta-Analysis: An Exact and Invariant Study-Based Decomposition of Direct and Indirect Contributions. 
 
 ### Software
 
@@ -68,7 +70,7 @@ Wang, C., Zhang, Y., Jin, Z., & O'Connor, A. (2026). CSP-NMA: R implementation o
 @article{wang2026contrast,
   title={Contrast-Space Projection for Network Meta-Analysis: An Exact and Invariant Study-Based Decomposition of Direct and Indirect Contributions},
   author={Wang, Chong and Zhang, Yanqi and Jin, Zhezhen and O'Connor, Annette},
-  journal={Research Synthesis Methods},
+  journal={},
   year={2026}
 }
 
