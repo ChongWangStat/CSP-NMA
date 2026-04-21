@@ -1,5 +1,9 @@
 cff-version: 1.0.0
 title: "Contrast-Space Projection for Network Meta-Analysis"
+version: "1.0.0"
+doi: 10.5281/zenodo.19687384
+date-released: 2026
+url: https://github.com/ChongWangStat/CSP-NMA
 authors:
   - family-names: Wang
     given-names: Chong
@@ -9,4 +13,4 @@ authors:
     given-names: Zhezhen
   - family-names: O'Connor
     given-names: Annette
-message: "If you use this code, please cite our paper."
+message: "If you use this code, please cite the Zenodo release."
