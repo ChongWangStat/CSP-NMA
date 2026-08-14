@@ -434,7 +434,8 @@ SAFE_STUDY_SEP <- " ||| "
 }
 
 .estimate_tau2_reml <- function(tilde_y, tilde_X, B, V_within_blocks, M_blocks,
-                                lower = 0, upper = NULL, tol = 1e-10) {
+                                lower = 0, upper = NULL, tol = 1e-10,
+                                max_upper_expansions = 20L) {
   XB <- tilde_X %*% B
 
   make_V <- function(tau2) {
@@ -463,17 +464,36 @@ SAFE_STUDY_SEP <- " ||| "
   }
 
   if (is.null(upper)) {
-    upper <- max(1, stats::var(as.numeric(tilde_y), na.rm = TRUE))
-  }
-  upper <- max(upper, 1e-6)
-
-  opt <- optimize(neg_reml, interval = c(lower, upper))
-
-  if (is.finite(opt$objective)) {
-    return(opt$minimum)
+    yvar <- stats::var(as.numeric(tilde_y), na.rm = TRUE)
+    if (!is.finite(yvar)) yvar <- 0
+    upper <- max(1, yvar)
   }
 
-  0
+  lower <- max(as.numeric(lower)[1], 0)
+  upper <- max(as.numeric(upper)[1], lower + 1e-6)
+  max_upper_expansions <- max(0L, as.integer(max_upper_expansions)[1])
+
+  opt <- NULL
+  for (j in 0:max_upper_expansions) {
+    opt <- tryCatch(
+      optimize(neg_reml, interval = c(lower, upper)),
+      error = function(e) NULL
+    )
+
+    if (is.null(opt) || !is.finite(opt$objective) || !is.finite(opt$minimum)) {
+      warning("REML optimization failed; tau^2 was set to 0.")
+      return(0)
+    }
+
+    if (opt$minimum < 0.95 * upper || j == max_upper_expansions) break
+    upper <- 2 * upper
+  }
+
+  if (opt$minimum >= 0.95 * upper) {
+    warning("The REML estimate is near the upper search boundary; consider supplying tau2 directly if a wider search is needed.")
+  }
+
+  max(as.numeric(opt$minimum), 0)
 }
 
 
@@ -891,46 +911,56 @@ q_decomposition <- function(fit, tol = 1e-8) {
   quad <- function(x) as.numeric(t(x) %*% V_plus %*% x)
 
   Q_net <- quad(tilde_y - yhat_C)
-  Q_het <- quad(tilde_y - yhat_D)
+  Q_within <- quad(tilde_y - yhat_D)
   Q_inc_geom <- quad(yhat_D - yhat_C)
 
-  scale_Q <- max(1, abs(Q_net), abs(Q_het), abs(Q_inc_geom))
-  geom_error <- Q_net - Q_het - Q_inc_geom
+  scale_Q <- max(1, abs(Q_net), abs(Q_within), abs(Q_inc_geom))
+  geom_error <- Q_net - Q_within - Q_inc_geom
   if (abs(geom_error) > tol * scale_Q) {
     stop(sprintf(
-      "Q decomposition failed numerically: Q_net - Q_het - Q_inc = %.3e",
+      "Q decomposition failed numerically: Q_net - Q_within - Q_inc = %.3e",
       geom_error
     ))
   }
 
-  Q_inc <- Q_net - Q_het
+  Q_inc <- Q_net - Q_within
   if (Q_inc < 0 && abs(Q_inc) <= tol * scale_Q) Q_inc <- 0
-  if (Q_inc < 0) stop("Computed Q_inc is negative beyond numerical tolerance.")
+  if (Q_inc < 0) stop("Computed inconsistency component is negative beyond numerical tolerance.")
 
   rank_V <- as.integer(Matrix::rankMatrix(tilde_V)[1])
   T_n <- length(fit$treatments)
   df_net <- rank_V - (T_n - 1L)
-  df_het <- rank_V - p_D
+  df_within <- rank_V - p_D
   df_inc <- p_D - (T_n - 1L)
 
-  if (any(c(df_net, df_het, df_inc) < 0L)) {
+  if (any(c(df_net, df_within, df_inc) < 0L)) {
     stop(sprintf(
-      "Negative Q degrees of freedom: net=%d, het=%d, inc=%d",
-      df_net, df_het, df_inc
+      "Negative Q degrees of freedom: net=%d, within=%d, inc=%d",
+      df_net, df_within, df_inc
     ))
   }
-  if (df_net != df_het + df_inc) {
-    stop("Q degrees of freedom do not satisfy df_net = df_het + df_inc.")
+  if (df_net != df_within + df_inc) {
+    stop("Q degrees of freedom do not satisfy df_net = df_within + df_inc.")
+  }
+
+  is_random <- !is.null(fit$model) && identical(fit$model, "random")
+
+  if (is_random) {
+    return(data.frame(
+      Treatments = T_n,
+      Designs = length(design_levels),
+      rank_V = rank_V,
+      p_D = p_D,
+      tau2 = if (!is.null(fit$tau2)) as.numeric(fit$tau2)[1] else NA_real_,
+      Q_net_RE = Q_net,
+      Q_error = Q_within,
+      Q_inc_RE = Q_inc,
+      stringsAsFactors = FALSE
+    ))
   }
 
   q_pvalue <- function(Q, df) {
     if (df > 0L) stats::pchisq(Q, df = df, lower.tail = FALSE) else NA_real_
-  }
-
-  if (!is.null(fit$model) && identical(fit$model, "random")) {
-    warning(
-      "For a random-effects fit, the Q decomposition is conditional on V(tau^2), and chi-squared reference p-values are approximate."
-    )
   }
 
   data.frame(
@@ -941,14 +971,12 @@ q_decomposition <- function(fit, tol = 1e-8) {
     Q_net = Q_net,
     df_net = df_net,
     p_net = q_pvalue(Q_net, df_net),
-    Q_het = Q_het,
-    df_het = df_het,
-    p_het = q_pvalue(Q_het, df_het),
+    Q_het = Q_within,
+    df_het = df_within,
+    p_het = q_pvalue(Q_within, df_within),
     Q_inc = Q_inc,
     df_inc = df_inc,
     p_inc = q_pvalue(Q_inc, df_inc),
-    decomposition_error = Q_net - Q_het - Q_inc,
-    geometric_check_error = Q_inc_geom - Q_inc,
     stringsAsFactors = FALSE
   )
 }
@@ -1027,9 +1055,6 @@ contrast_decomposition_table <- function(fit, target, conf_level = 0.95) {
   bind_rows(summary_rows, direct_rows, indirect_rows)
 }
 
-# ============================================================
-# Exact reproducibility checks
-# ============================================================
 # 4. Forest plot
 # ============================================================
 plot_csp_forest <- function(fit, target, show_indirect_paths = FALSE,

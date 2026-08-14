@@ -29,7 +29,6 @@ where `Q_error` is residual within-design error after accounting for the modeled
 - **Multi-arm integration:** Retains the covariance structure induced by multi-arm studies.
 - **Canonical study/path representation:** Removes within-study algebraic redundancy before assembling indirect network paths.
 - **Generalized Cochran Q diagnostics:** For fixed effects, reports `Q_net`, `Q_het`, and `Q_inc` and checks `Q_net = Q_het + Q_inc`. For random effects, reports `tau2`, `Q_net_RE`, `Q_error`, and `Q_inc_RE` and checks `Q_net_RE = Q_error + Q_inc_RE`.
-- **Reproducibility checks:** Verifies that the projection, aggregated direct/indirect contributions, and full path decomposition reproduce the same fitted NMA estimate.
 - **Visual diagnostics:** Includes forest, tension, path-based, and three-dimensional contribution displays.
 - **Flexible modeling:** Supports fixed-effects and random-effects NMA within the same projection framework.
 
@@ -43,7 +42,7 @@ For formal inconsistency inference under random effects, a separate random-effec
 
 ## Repository Structure
 
-- `csp_functions.R`: Core mathematical and graphical implementation of CSP, including the generalized Cochran Q decomposition and exact reproducibility checks.
+- `csp_functions.R`: Core mathematical and graphical implementation of CSP, including the generalized Cochran Q decomposition.
 - `csp_example.R`: Walkthrough using an illustrative dataset (Treatments A-E, Studies S1-S5).
 
 ## Getting Started
@@ -64,24 +63,8 @@ Place `csp_functions.R` and `csp_example.R` in the same directory, open R or RSt
 source("csp_example.R")
 ```
 
-The script runs the fixed-effects illustrative analysis by default and outputs the projection matrix, the generalized Cochran Q decomposition (`Q_net`, `Q_het`, and `Q_inc`), exact reproducibility checks, and the illustrative CSP decomposition and visualizations. A commented random-effects block is included as an optional example; users may uncomment it to obtain `tau2`, `Q_net_RE`, `Q_error`, and `Q_inc_RE`.
+The script runs the fixed-effects illustrative analysis by default and outputs the projection matrix, the generalized Cochran Q decomposition (`Q_net`, `Q_het`, and `Q_inc`), and the illustrative CSP decomposition and visualizations. A single commented line shows how to fit the same data under a random-effects model; the same functions can then be applied to `example_fit_random`, with `q_decomposition()` returning `tau2`, `Q_net_RE`, `Q_error`, and `Q_inc_RE`.
 
-For the included fixed-effects example, the Q diagnostics are approximately:
-
-- `Q_net = 5.6868`, `df = 5`, `p = 0.3379`
-- `Q_het = 0.3570`, `df = 1`, `p = 0.5502`
-- `Q_inc = 5.3298`, `df = 4`, `p = 0.2551`
-
-and `Q_net - Q_het - Q_inc` is zero up to numerical precision.
-
-If the optional random-effects block in `csp_example.R` is uncommented, the results are approximately:
-
-- `tau2 = 0.0034683`
-- `Q_net_RE = 4.5932`
-- `Q_error = 0.3416`
-- `Q_inc_RE = 4.2516`
-
-and `Q_net_RE - Q_error - Q_inc_RE` is zero up to numerical precision. Here `tau2` is the modeled heterogeneity variance; `Q_error` is not a second heterogeneity test.
 
 ## Citation
 
