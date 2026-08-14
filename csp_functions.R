@@ -62,125 +62,136 @@ SAFE_STUDY_SEP <- " ||| "
   }
 }
 
-.aggregate_edge_df <- function(edge_df, tol = 1e-12) {
-  if (nrow(edge_df) == 0) {
-    return(data.frame(
-      frag_id = integer(0), id = integer(0), study = character(0),
-      from = character(0), to = character(0), weight = numeric(0),
-      stringsAsFactors = FALSE
-    ))
-  }
-  out <- aggregate(weight ~ frag_id + id + study + from + to, data = edge_df, FUN = sum)
-  out <- out[out$weight > tol, , drop = FALSE]
-  rownames(out) <- NULL
-  out
-}
+.canonical_endpoint_edges <- function(p_k, arms, target_pair, study_name, study_id,
+                                      global_treatments, tol = 1e-12) {
+  arms <- sort(unique(as.character(arms)))
+  b <- setNames(rep(0, length(arms)), arms)
 
-.pk_to_flow_df <- function(p_k, study_name, study_id, tol = 1e-12) {
-  out <- list()
-  cc <- 0L
   for (nm in names(p_k)) {
-    w <- p_k[[nm]]
+    w <- as.numeric(p_k[[nm]])
     if (abs(w) <= tol) next
-    sp <- strsplit(nm, ":", fixed = TRUE)[[1]]
-    u <- sp[1]; v <- sp[2]
-    if (w > 0) {
-      from <- u; to <- v; wt <- w
-    } else {
-      from <- v; to <- u; wt <- -w
+    uv <- strsplit(nm, ":", fixed = TRUE)[[1]]
+    u <- uv[1]
+    v <- uv[2]
+    if (!(u %in% arms) || !(v %in% arms)) {
+      stop("Local contrast contains a treatment not present in the study: ", nm)
     }
-    cc <- cc + 1L
-    out[[cc]] <- data.frame(
-      frag_id = cc, id = study_id, study = study_name,
-      from = from, to = to, weight = wt,
+    b[[u]] <- b[[u]] + w
+    b[[v]] <- b[[v]] - w
+  }
+
+  s <- pmax(b, 0)
+  d <- pmax(-b, 0)
+  names(s) <- names(d) <- arms
+
+  edges <- list()
+  frag <- 0L
+
+  add_edge <- function(u, v, w, type) {
+    if (w <= tol) return(invisible(NULL))
+    frag <<- frag + 1L
+    edges[[frag]] <<- data.frame(
+      frag_id = frag,
+      id = study_id,
+      study = study_name,
+      from = u,
+      to = v,
+      weight = as.numeric(w),
+      type = type,
       stringsAsFactors = FALSE
     )
+    invisible(NULL)
   }
-  if (length(out) == 0) {
-    return(data.frame(
-      frag_id = integer(0), id = integer(0), study = character(0),
+
+  pp <- .parse_pair(target_pair)
+  a <- pp$u
+  b_target <- pp$v
+
+  if (a %in% arms && b_target %in% arms) {
+    w_direct <- min(s[[a]], d[[b_target]])
+    if (w_direct > tol) {
+      add_edge(a, b_target, w_direct, "Dir")
+      s[[a]] <- s[[a]] - w_direct
+      d[[b_target]] <- d[[b_target]] - w_direct
+      if (s[[a]] <= tol) s[[a]] <- 0
+      if (d[[b_target]] <= tol) d[[b_target]] <- 0
+    }
+  }
+
+  max_iter <- 2L * length(arms) + 10L
+  iter <- 0L
+
+  repeat {
+    srcs <- names(s)[s > tol]
+    sinks <- names(d)[d > tol]
+    if (length(srcs) == 0L && length(sinks) == 0L) break
+    if (length(srcs) == 0L || length(sinks) == 0L) {
+      stop("Canonical balance reduction failed: unmatched supply or demand in study ", study_name)
+    }
+
+    cand <- expand.grid(u = srcs, v = sinks, stringsAsFactors = FALSE)
+    cand$lambda <- mapply(
+      function(u, v) min(s[[u]], d[[v]]),
+      cand$u,
+      cand$v
+    )
+
+    lambda_max <- max(cand$lambda)
+    tie_tol <- tol * max(1, abs(lambda_max))
+    cand <- cand[abs(cand$lambda - lambda_max) <= tie_tol, , drop = FALSE]
+
+    u_rank <- match(cand$u, global_treatments)
+    v_rank <- match(cand$v, global_treatments)
+    if (anyNA(u_rank) || anyNA(v_rank)) {
+      stop("Treatment ordering is inconsistent with the fitted network.")
+    }
+    cand$rho <- (u_rank - 1L) * length(global_treatments) + v_rank
+    cand <- cand[order(cand$rho, cand$u, cand$v), , drop = FALSE]
+
+    u <- cand$u[1]
+    v <- cand$v[1]
+    w <- cand$lambda[1]
+    add_edge(u, v, w, "Ind")
+
+    s[[u]] <- s[[u]] - w
+    d[[v]] <- d[[v]] - w
+    if (s[[u]] <= tol) s[[u]] <- 0
+    if (d[[v]] <= tol) d[[v]] <- 0
+
+    iter <- iter + 1L
+    if (iter > max_iter) {
+      stop("Canonical balance reduction exceeded its finite-allocation bound in study ", study_name)
+    }
+  }
+
+  if (length(edges) == 0L) {
+    out <- data.frame(
+      frag_id = integer(0), id = numeric(0), study = character(0),
       from = character(0), to = character(0), weight = numeric(0),
-      stringsAsFactors = FALSE
+      type = character(0), stringsAsFactors = FALSE
+    )
+  } else {
+    out <- do.call(rbind, edges)
+    rownames(out) <- NULL
+  }
+
+  b_check <- setNames(rep(0, length(arms)), arms)
+  if (nrow(out) > 0L) {
+    for (i in seq_len(nrow(out))) {
+      b_check[[out$from[i]]] <- b_check[[out$from[i]]] + out$weight[i]
+      b_check[[out$to[i]]] <- b_check[[out$to[i]]] - out$weight[i]
+    }
+  }
+
+  balance_error <- max(abs(b_check - b))
+  if (balance_error > tol * max(1, max(abs(b)))) {
+    stop(sprintf(
+      "Canonical treatment-balance reconstruction failed in study %s: error = %.3e",
+      study_name, balance_error
     ))
   }
-  do.call(rbind, out)
-}
 
-.node_balance_df <- function(edge_df, tol = 1e-12) {
-  if (nrow(edge_df) == 0) {
-    return(data.frame(node = character(0), inflow = numeric(0), outflow = numeric(0)))
-  }
-  nds <- sort(unique(c(edge_df$from, edge_df$to)))
-  data.frame(
-    node = nds,
-    inflow = sapply(nds, function(x) sum(edge_df$weight[edge_df$to == x & edge_df$weight > tol])),
-    outflow = sapply(nds, function(x) sum(edge_df$weight[edge_df$from == x & edge_df$weight > tol])),
-    stringsAsFactors = FALSE
-  )
-}
-
-.choose_source_node <- function(edge_df, tol = 1e-12) {
-  bal <- .node_balance_df(edge_df, tol = tol)
-  srcs <- bal[bal$inflow <= tol & bal$outflow > tol, , drop = FALSE]
-  if (nrow(srcs) == 0) return(NA_character_)
-  srcs <- srcs[order(-srcs$outflow, srcs$node), , drop = FALSE]
-  srcs$node[1]
-}
-
-.find_heaviest_path_from_source <- function(edge_df, source, tol = 1e-12) {
-  if (nrow(edge_df) == 0) return(NULL)
-  dfs <- function(current, visited) {
-    cand <- which(edge_df$from == current & edge_df$weight > tol)
-    if (length(cand) == 0) return(integer(0))
-    ord <- order(-edge_df$weight[cand], edge_df$to[cand], edge_df$study[cand], edge_df$frag_id[cand])
-    cand <- cand[ord]
-    
-    usable <- cand[!(edge_df$to[cand] %in% visited)]
-    if (length(usable) == 0) return(integer(0))
-    
-    for (ix in usable) {
-      nxt <- edge_df$to[ix]
-      sub <- dfs(nxt, c(visited, nxt))
-      if (!is.null(sub)) return(c(ix, sub))
-    }
-    integer(0)
-  }
-  idx <- dfs(source, source)
-  if (is.null(idx) || length(idx) == 0) return(NULL)
-  idx
-}
-
-.collapse_one_study_all_sources <- function(p_k, st_name, st_id, tol = 1e-12) {
-  work <- .pk_to_flow_df(p_k, study_name = st_name, study_id = st_id, tol = tol)
-  collapsed_paths <- list()
-  cc <- 0L
-  repeat {
-    if (nrow(work) == 0) break
-    src <- .choose_source_node(work, tol = tol)
-    if (is.na(src)) break
-    repeat {
-      idx_path <- .find_heaviest_path_from_source(work, src, tol = tol)
-      if (is.null(idx_path) || length(idx_path) == 0) break
-      seg_df <- work[idx_path, , drop = FALSE]
-      path_w <- min(seg_df$weight)
-      start_node <- seg_df$from[1]
-      end_node <- seg_df$to[nrow(seg_df)]
-      cc <- cc + 1L
-      collapsed_paths[[cc]] <- data.frame(
-        study = st_name, study_id = st_id, source_node = src,
-        path_id = cc, path_weight = path_w,
-        start = start_node, end = end_node,
-        stringsAsFactors = FALSE
-      )
-      work$weight[idx_path] <- work$weight[idx_path] - path_w
-      work$weight[abs(work$weight) < tol] <- 0
-      work <- work[work$weight > tol, , drop = FALSE]
-      if (nrow(work) == 0) break
-      if (!any(work$from == src & work$weight > tol)) break
-    }
-  }
-  collapsed_df <- if (length(collapsed_paths)) do.call(rbind, collapsed_paths) else data.frame()
-  list(collapsed_paths = collapsed_df, leftover_edges = work)
+  out
 }
 
 .collapse_path_segments <- function(seg_df) {
@@ -209,26 +220,71 @@ SAFE_STUDY_SEP <- " ||| "
   do.call(rbind, out)
 }
 
-.find_one_reporting_path <- function(edge_df, source, sink, tol = 1e-12) {
-  if (nrow(edge_df) == 0) return(NULL)
-  dfs <- function(current, visited) {
-    if (current == sink) return(integer(0))
-    cand <- which(edge_df$from == current & edge_df$weight > tol)
-    if (length(cand) == 0) return(NULL)
-    ord <- order(-edge_df$weight[cand], edge_df$to[cand], edge_df$study[cand], edge_df$frag_id[cand])
-    cand <- cand[ord]
-    
-    usable <- cand[!(edge_df$to[cand] %in% visited)]
-    if (length(usable) == 0) return(NULL)
-    
-    for (ix in usable) {
-      nxt <- edge_df$to[ix]
-      sub <- dfs(nxt, c(visited, nxt))
-      if (!is.null(sub)) return(c(ix, sub))
+.find_widest_reporting_path <- function(edge_df, source, sink, tol = 1e-12) {
+  if (nrow(edge_df) == 0L) return(NULL)
+
+  nodes <- sort(unique(c(source, sink, edge_df$from, edge_df$to)))
+  cap <- setNames(rep(0, length(nodes)), nodes)
+  pred_edge <- setNames(rep(NA_integer_, length(nodes)), nodes)
+  visited <- setNames(rep(FALSE, length(nodes)), nodes)
+  cap[[source]] <- Inf
+
+  repeat {
+    available <- nodes[!visited & (is.infinite(cap) | cap > tol)]
+    if (length(available) == 0L) break
+
+    vals <- cap[available]
+    max_cap <- max(vals)
+    if (is.infinite(max_cap)) {
+      tied <- available[is.infinite(vals)]
+    } else {
+      tie_tol <- tol * max(1, abs(max_cap))
+      tied <- available[abs(vals - max_cap) <= tie_tol]
     }
-    NULL
+    u <- sort(tied)[1]
+    visited[[u]] <- TRUE
+    if (u == sink) break
+
+    out_idx <- which(edge_df$from == u & edge_df$weight > tol)
+    if (length(out_idx) == 0L) next
+    out_idx <- out_idx[order(
+      edge_df$to[out_idx],
+      edge_df$study[out_idx],
+      edge_df$id[out_idx],
+      edge_df$frag_id[out_idx]
+    )]
+
+    for (ix in out_idx) {
+      v <- edge_df$to[ix]
+      if (visited[[v]]) next
+      cand_cap <- min(cap[[u]], edge_df$weight[ix])
+      improve_tol <- tol * max(1, abs(cand_cap), abs(cap[[v]]))
+      better <- cand_cap > cap[[v]] + improve_tol
+      tied_cap <- abs(cand_cap - cap[[v]]) <= improve_tol
+      deterministic_tie <- tied_cap && (is.na(pred_edge[[v]]) || ix < pred_edge[[v]])
+      if (better || deterministic_tie) {
+        cap[[v]] <- cand_cap
+        pred_edge[[v]] <- ix
+      }
+    }
   }
-  dfs(source, source)
+
+  if (!is.finite(cap[[sink]]) && source != sink) return(NULL)
+  if (cap[[sink]] <= tol) return(NULL)
+
+  idx_rev <- integer(0)
+  current <- sink
+  seen <- character(0)
+  while (current != source) {
+    if (current %in% seen) stop("Cycle encountered while reconstructing widest path.")
+    seen <- c(seen, current)
+    ix <- pred_edge[[current]]
+    if (is.na(ix)) return(NULL)
+    idx_rev <- c(idx_rev, ix)
+    current <- edge_df$from[ix]
+  }
+
+  rev(idx_rev)
 }
 
 .compute_path_stats <- function(res, studies_str, path_str, weight, conf_level = 0.95) {
@@ -582,62 +638,49 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
     p_k
   }
   
-  classify_collapsed_for_target <- function(collapsed_df, target_pair) {
-    pp <- .parse_pair(target_pair)
-    src <- pp$u; tgt <- pp$v
-    if (nrow(collapsed_df) == 0) return(collapsed_df)
-    collapsed_df$type <- ifelse(collapsed_df$start == src & collapsed_df$end == tgt, "Dir", "Ind")
-    collapsed_df
-  }
-  
-  collapsed_paths_to_endpoint_edges <- function(collapsed_df, tol = 1e-12) {
-    if (nrow(collapsed_df) == 0) return(empty_edge_df())
-    out <- data.frame(
-      frag_id = seq_len(nrow(collapsed_df)),
-      id = collapsed_df$study_id,
-      study = collapsed_df$study,
-      from = collapsed_df$start,
-      to = collapsed_df$end,
-      weight = collapsed_df$path_weight,
-      stringsAsFactors = FALSE
-    )
-    .aggregate_edge_df(out, tol = tol)
-  }
-  
   extract_study_collapsed_direct_indirect <- function(target_pair, blk, tol = 1e-12) {
     p_k <- get_study_pk(target_pair, blk)
-    col_obj <- .collapse_one_study_all_sources(p_k, st_name = blk$study, st_id = blk$id, tol = tol)
-    collapsed_df <- classify_collapsed_for_target(col_obj$collapsed_paths, target_pair)
-    
-    direct_df <- if (nrow(collapsed_df) > 0) {
-      dd <- collapsed_df[collapsed_df$type == "Dir", , drop = FALSE]
-      if (nrow(dd) > 0) {
-        data.frame(
-          target = target_pair,
-          type = "Dir",
-          studies = dd$study,
-          path = paste(dd$start, dd$end, sep = "->"),
-          weight = dd$path_weight,
-          stringsAsFactors = FALSE
-        )
-      } else empty_path_df()
-    } else empty_path_df()
-    
-    endpoint_edges <- collapsed_paths_to_endpoint_edges(collapsed_df, tol = tol)
-    if (nrow(endpoint_edges) > 0) {
-      pp <- .parse_pair(target_pair)
-      direct_edges <- endpoint_edges[endpoint_edges$from == pp$u & endpoint_edges$to == pp$v, , drop = FALSE]
-      indirect_edges <- endpoint_edges[!(endpoint_edges$from == pp$u & endpoint_edges$to == pp$v), , drop = FALSE]
-    } else {
-      direct_edges <- empty_edge_df()
-      indirect_edges <- empty_edge_df()
+    endpoint_edges <- .canonical_endpoint_edges(
+      p_k = p_k,
+      arms = blk$arms,
+      target_pair = target_pair,
+      study_name = blk$study,
+      study_id = blk$id,
+      global_treatments = trts,
+      tol = tol
+    )
+
+    if (nrow(endpoint_edges) == 0L) {
+      return(list(
+        direct_paths = empty_path_df(),
+        direct_edges = empty_edge_df(),
+        indirect_edges = empty_edge_df()
+      ))
     }
-    
+
+    direct_edges <- endpoint_edges[endpoint_edges$type == "Dir", , drop = FALSE]
+    indirect_edges <- endpoint_edges[endpoint_edges$type == "Ind", , drop = FALSE]
+
+    direct_df <- if (nrow(direct_edges) > 0L) {
+      data.frame(
+        target = target_pair,
+        type = "Dir",
+        studies = direct_edges$study,
+        path = paste(direct_edges$from, direct_edges$to, sep = "->"),
+        weight = direct_edges$weight,
+        stringsAsFactors = FALSE
+      )
+    } else {
+      empty_path_df()
+    }
+
+    direct_edges$type <- NULL
+    indirect_edges$type <- NULL
+
     list(
       direct_paths = direct_df,
       direct_edges = direct_edges,
-      indirect_edges = indirect_edges,
-      leftover_edges_after_collapse = col_obj$leftover_edges
+      indirect_edges = indirect_edges
     )
   }
   
@@ -649,12 +692,12 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
     pp <- .parse_pair(target_pair)
     source <- pp$u
     sink <- pp$v
-    work <- residual_edges
+    work <- residual_edges[residual_edges$weight > tol, , drop = FALSE]
     path_rows <- list()
     pid <- 0L
     
     repeat {
-      idx_path <- .find_one_reporting_path(work, source = source, sink = sink, tol = tol)
+      idx_path <- .find_widest_reporting_path(work, source = source, sink = sink, tol = tol)
       if (is.null(idx_path) || length(idx_path) == 0) break
       
       seg_df <- work[idx_path, , drop = FALSE]
@@ -686,6 +729,13 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
       work$weight[idx_path] <- work$weight[idx_path] - w_path
       work$weight[abs(work$weight) < tol] <- 0
       work <- work[work$weight > tol, , drop = FALSE]
+    }
+
+    if (nrow(work) > 0L) {
+      stop(sprintf(
+        "Indirect path extraction for %s left %d positive residual edge(s).",
+        target_pair, nrow(work)
+      ))
     }
     
     ind_df <- if (length(path_rows)) do.call(rbind, path_rows) else empty_path_df()
@@ -761,33 +811,144 @@ fit_csp_nma <- function(dat, cc = 0.5, tol = 1e-12, verbose = TRUE,
 }
 
 # ============================================================
-# 2. Global Q test for inconsistency
+# 2. Generalized Cochran Q decomposition
 # ============================================================
-q_inconsistency_test <- function(fit) {
-  tilde_y <- unlist(lapply(fit$blocks, `[[`, "y"))
+q_decomposition <- function(fit, tol = 1e-8) {
+  required <- c("treatments", "blocks", "pair_names", "theta_hat")
+  missing <- required[!vapply(required, function(x) !is.null(fit[[x]]), logical(1))]
+  if (length(missing) > 0L) {
+    stop("The fitted object is missing required component(s): ", paste(missing, collapse = ", "))
+  }
+
+  tilde_y <- unlist(lapply(fit$blocks, `[[`, "y"), use.names = FALSE)
   tilde_X <- do.call(rbind, lapply(fit$blocks, `[[`, "X"))
   tilde_V <- as.matrix(Matrix::bdiag(lapply(fit$blocks, `[[`, "V")))
-  row_names <- unlist(lapply(fit$blocks, `[[`, "row_names"))
+  row_names <- unlist(lapply(fit$blocks, `[[`, "row_names"), use.names = FALSE)
   rownames(tilde_X) <- row_names
   rownames(tilde_V) <- row_names
   colnames(tilde_V) <- row_names
-  
-  theta_hat_vec <- as.numeric(fit$theta_hat[fit$pair_names])
-  fitted_y <- as.vector(tilde_X %*% theta_hat_vec)
-  resid_y <- tilde_y - fitted_y
-  
+
   V_plus <- MASS::ginv(tilde_V)
-  Q_inc <- as.numeric(t(resid_y) %*% V_plus %*% resid_y)
+
+  theta_hat_vec <- as.numeric(fit$theta_hat[fit$pair_names])
+  yhat_C <- as.vector(tilde_X %*% theta_hat_vec)
+
+  design_key <- vapply(
+    fit$blocks,
+    function(blk) paste(sort(as.character(blk$arms)), collapse = "|||"),
+    character(1)
+  )
+  design_levels <- unique(design_key)
+  first_block <- match(design_levels, design_key)
+  design_arms <- lapply(
+    first_block,
+    function(k) sort(as.character(fit$blocks[[k]]$arms))
+  )
+  p_by_design <- vapply(design_arms, function(x) length(x) - 1L, integer(1))
+
+  col_end <- cumsum(p_by_design)
+  col_start <- c(1L, head(col_end, -1L) + 1L)
+  Z <- matrix(0, nrow = length(tilde_y), ncol = sum(p_by_design))
+
+  row0 <- 0L
+  for (k in seq_along(fit$blocks)) {
+    blk <- fit$blocks[[k]]
+    arms <- sort(as.character(blk$arms))
+    ref <- arms[1]
+    nonref <- arms[-1]
+    local_pairs <- blk$local_pair_names
+
+    Zk <- matrix(0, nrow = length(local_pairs), ncol = length(nonref))
+    for (i in seq_along(local_pairs)) {
+      uv <- strsplit(local_pairs[i], ":", fixed = TRUE)[[1]]
+      u <- uv[1]
+      v <- uv[2]
+      if (u != ref) Zk[i, match(u, nonref)] <- -1
+      if (v != ref) Zk[i, match(v, nonref)] <- 1
+    }
+
+    d <- match(design_key[k], design_levels)
+    nr <- nrow(Zk)
+    rows <- row0 + seq_len(nr)
+    cols <- col_start[d]:col_end[d]
+    Z[rows, cols] <- Zk
+    row0 <- row0 + nr
+  }
+
+  p_D <- as.integer(Matrix::rankMatrix(Z)[1])
+  p_D_expected <- sum(p_by_design)
+  if (p_D != p_D_expected) {
+    warning(sprintf(
+      "The design-specific model has rank %d, whereas sum_d(t_d-1) = %d; degrees of freedom use rank(Z).",
+      p_D, p_D_expected
+    ))
+  }
+
+  I_D <- t(Z) %*% V_plus %*% Z
+  gamma_D <- MASS::ginv(I_D) %*% t(Z) %*% V_plus %*% tilde_y
+  yhat_D <- as.vector(Z %*% gamma_D)
+
+  quad <- function(x) as.numeric(t(x) %*% V_plus %*% x)
+
+  Q_net <- quad(tilde_y - yhat_C)
+  Q_het <- quad(tilde_y - yhat_D)
+  Q_inc_geom <- quad(yhat_D - yhat_C)
+
+  scale_Q <- max(1, abs(Q_net), abs(Q_het), abs(Q_inc_geom))
+  geom_error <- Q_net - Q_het - Q_inc_geom
+  if (abs(geom_error) > tol * scale_Q) {
+    stop(sprintf(
+      "Q decomposition failed numerically: Q_net - Q_het - Q_inc = %.3e",
+      geom_error
+    ))
+  }
+
+  Q_inc <- Q_net - Q_het
+  if (Q_inc < 0 && abs(Q_inc) <= tol * scale_Q) Q_inc <- 0
+  if (Q_inc < 0) stop("Computed Q_inc is negative beyond numerical tolerance.")
+
   rank_V <- as.integer(Matrix::rankMatrix(tilde_V)[1])
-  df <- rank_V - (length(fit$treatments) - 1)
-  p_value <- pchisq(Q_inc, df = df, lower.tail = FALSE)
-  
+  T_n <- length(fit$treatments)
+  df_net <- rank_V - (T_n - 1L)
+  df_het <- rank_V - p_D
+  df_inc <- p_D - (T_n - 1L)
+
+  if (any(c(df_net, df_het, df_inc) < 0L)) {
+    stop(sprintf(
+      "Negative Q degrees of freedom: net=%d, het=%d, inc=%d",
+      df_net, df_het, df_inc
+    ))
+  }
+  if (df_net != df_het + df_inc) {
+    stop("Q degrees of freedom do not satisfy df_net = df_het + df_inc.")
+  }
+
+  q_pvalue <- function(Q, df) {
+    if (df > 0L) stats::pchisq(Q, df = df, lower.tail = FALSE) else NA_real_
+  }
+
+  if (!is.null(fit$model) && identical(fit$model, "random")) {
+    warning(
+      "For a random-effects fit, the Q decomposition is conditional on V(tau^2), and chi-squared reference p-values are approximate."
+    )
+  }
+
   data.frame(
-    Treatments = length(fit$treatments),
+    Treatments = T_n,
+    Designs = length(design_levels),
     rank_V = rank_V,
+    p_D = p_D,
+    Q_net = Q_net,
+    df_net = df_net,
+    p_net = q_pvalue(Q_net, df_net),
+    Q_het = Q_het,
+    df_het = df_het,
+    p_het = q_pvalue(Q_het, df_het),
     Q_inc = Q_inc,
-    df = df,
-    p_value = p_value,
+    df_inc = df_inc,
+    p_inc = q_pvalue(Q_inc, df_inc),
+    decomposition_error = Q_net - Q_het - Q_inc,
+    geometric_check_error = Q_inc_geom - Q_inc,
     stringsAsFactors = FALSE
   )
 }
@@ -866,6 +1027,8 @@ contrast_decomposition_table <- function(fit, target, conf_level = 0.95) {
   bind_rows(summary_rows, direct_rows, indirect_rows)
 }
 
+# ============================================================
+# Exact reproducibility checks
 # ============================================================
 # 4. Forest plot
 # ============================================================

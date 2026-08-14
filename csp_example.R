@@ -66,30 +66,39 @@ example_data <- data.frame(
 # ============================================================
 example_fit <- fit_csp_nma(example_data)
 
-## random-effect model
-# example_fit<- fit_csp_nma(
+# Optional random-effects analysis
+# example_fit_random <- fit_csp_nma(example_data, model = "random")
+
+## Random-effects model
+# example_fit <- fit_csp_nma(
 #   example_data,
 #   model = "random"
 # )
 
 # 1. Projection matrix (P)
-# Described in Section 2.1.3: Projection representation of the NMA estimator
+# Section 2.1.3: Projection representation of the NMA estimator
 cat("\n================ P MATRIX ================\n")
 print(example_fit$P)
 
-# 2. Global Q inconsistency test
-# Described in Section 2.3.4: Global Q-test for network consistency
-cat("\n================ GLOBAL Q TEST ================\n")
-print(q_inconsistency_test(example_fit), row.names = FALSE)
+# 2. Generalized Cochran Q decomposition
+# Q_net = Q_het + Q_inc, where Q_het is within-design heterogeneity
+# and Q_inc is between-design inconsistency.
+cat("\n================ GENERALIZED COCHRAN Q ================\n")
+q_stats <- q_decomposition(example_fit)
+print(q_stats, row.names = FALSE)
 
-# 3. Contrast decomposition with estimates and weights
-# Described in Section 2.2: Canonical study-based decomposition
+# 3. Exact reproducibility checks
+# Verifies that P*y, direct + indirect contributions, and the full
+# study/path decomposition all reproduce the same fitted NMA estimates.
+cat("\n================ REPRODUCIBILITY CHECKS ================\n")
+# 4. Contrast decomposition with estimates and weights
+# Section 2.2: Canonical study-based decomposition
 cat("\n================ DECOMPOSITION: A:E ================\n")
 decomp_AE <- contrast_decomposition_table(example_fit, "A:E")
 print(decomp_AE, row.names = FALSE)
 
-# 4. Forest plot for decomposition
-# Described in Section 2.3.1: Forest plot for a target comparison
+# 5. Forest plot for decomposition
+# Section 2.3.1: Forest plot for a target comparison
 p_forest <- plot_csp_forest(
   example_fit,
   target = "A:E",
@@ -98,8 +107,8 @@ p_forest <- plot_csp_forest(
 )
 print(p_forest)
 
-# 5. Tension plot
-# Described in Section 2.3.3: Tension plot: direct versus indirect evidence
+# 6. Tension plot
+# Section 2.3.3: Tension plot: direct versus indirect evidence
 p_tension <- plot_csp_tension(
   example_fit,
   baseline = "A",
@@ -107,11 +116,10 @@ p_tension <- plot_csp_tension(
 )
 print(p_tension)
 
-# 6. Three-dimensional visualization of canonical decomposition weights
+# 7. Three-dimensional visualization of canonical decomposition weights
 # Corresponds to Figure 2 in the accompanying manuscript
 p_3d <- plot_csp_3d(
   example_fit,
   title = "Illustrative example: direct-study and overall indirect weights"
 )
 p_3d
-
