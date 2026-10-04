@@ -1,0 +1,24 @@
+name: mbnmadose-psoriasis-probe
+on:
+  push:
+    branches:
+      - analysis/psoriasis-audit-2026-10-04
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4.1'
+          use-public-rspm: true
+      - name: Install MBNMAdose
+        run: Rscript -e 'install.packages("MBNMAdose", repos="https://cloud.r-project.org")'
+      - name: Probe datasets
+        run: Rscript analysis/mbnmadose_psoriasis_probe.R
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mbnmadose-psoriasis-probe
+          path: psoriasis*_complete.csv
+          if-no-files-found: error
