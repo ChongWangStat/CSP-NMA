@@ -22,14 +22,13 @@ jobs:
       - name: Install current netmeta 3.7-0
         run: |
           Rscript -e 'install.packages("remotes", repos="https://cloud.r-project.org"); remotes::install_version("netmeta", version="3.7-0", upgrade="never", dependencies=TRUE)'
-      - name: Run COVID netmeta audit
+      - name: Run corrected COVID netmeta audit
         run: |
-          Rscript analysis/covid_netmeta_compare_v3.R
+          Rscript analysis/covid_netmeta_compare_v4.R
       - name: Upload audit outputs
         uses: actions/upload-artifact@v4
         with:
-          name: covid-netmeta-audit-current
+          name: covid-netmeta-audit-current-v4
           path: |
-            covid_*csv
-            covid_*rds
+            covid_*v4.csv
           if-no-files-found: error
