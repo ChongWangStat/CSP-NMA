@@ -21,7 +21,7 @@ jobs:
           use-public-rspm: true
       - name: Install current netmeta 3.7-0
         run: |
-          Rscript -e 'install.packages("remotes", repos="https://cloud.r-project.org"); remotes::install_version("netmeta", version="3.7-0", upgrade="never", dependencies=TRUE)'
+          Rscript -e 'install.packages("remotes", repos="https://cloud.r-project.org"); remotes::install_version("netmeta", version="3.7-0", upgrade="never", dependencies=NA)'
       - name: Run corrected COVID netmeta audit
         run: |
           Rscript analysis/covid_netmeta_compare_v4.R
